@@ -1,63 +1,63 @@
-# 加载必要的包
+# Load required packages
 library(limma)
 library(edgeR)
 library(ggplot2)
 library(org.Hs.eg.db)
 
 setwd('/mnt/data4/表型研究2026/ccRCC/RHWU/8.生物学')
-# 1. 读取数据
-# 假设文件名为 "RHWU_ccRCC_bulk_RNA_Seq_gene_counts.csv"
+# 1. Read data
+# Assume the file name is "RHWU_ccRCC_bulk_RNA_Seq_gene_counts.csv"
 counts <- read.csv("RHWU_ccRCC_bulk_RNA_Seq_gene_counts.csv", row.names = 1, check.names = FALSE)
 
-# 查看数据维度
-dim(counts)  # 应包含约 6 万基因，8 个样本
+# Check data dimensions
+dim(counts)  # Should contain about 60,000 genes and 8 samples
 
-# 2. 样本分组
-# 定义对照组和实验组的样本名称（按列名）
+# 2. Sample grouping
+# Define sample names for control and treatment groups (by column names)
 control_samples <- c("王风云11010926")  #,"彭瑞娟11013049" "陶炎兰10965751",
 treat_samples   <- c("任志海11029686","付喜明10959018","何兰珍11017067","徐子军10985575","张苹英10977361")
 
-# 检查列名是否都存在
+# Check whether all column names exist
 stopifnot(all(control_samples %in% colnames(counts)))
 stopifnot(all(treat_samples %in% colnames(counts)))
 
-# 按顺序排列列
+# Arrange columns in order
 samples <- c(control_samples, treat_samples)
 counts <- counts[, samples]
 group <- factor(c(rep("Control", length(control_samples)),
                   rep("Treatment", length(treat_samples))))
 
-# ------------------------------ 4. 过滤低表达基因 ----------------------------------
+# ------------------------------ 4. Filter low-expression genes ----------------------------------
 keep <- rowSums(cpm(counts) > 1) >= 2
 counts_filt <- counts[keep, ]
-cat("过滤后基因数:", nrow(counts_filt), "\n")
+cat("Number of genes after filtering:", nrow(counts_filt), "\n")
 
-# ------------------------------ 5. DGEList 与归一化 ----------------------------------
+# ------------------------------ 5. DGEList and normalization ----------------------------------
 dge <- DGEList(counts = counts_filt, group = group)
 dge <- calcNormFactors(dge)
 
-# ------------------------------ 6. voom 转换与线性建模 ----------------------------------
+# ------------------------------ 6. voom transformation and linear modeling ----------------------------------
 design <- model.matrix(~ group)
 v <- voom(dge, design, plot = TRUE)
 
 fit <- lmFit(v, design)
 fit <- eBayes(fit, robust = TRUE)
 
-# ------------------------------ 7. 提取差异表达结果 ----------------------------------
+# ------------------------------ 7. Extract differential expression results ----------------------------------
 res <- topTable(fit, coef = 2, number = Inf, sort.by = "P")
 res$ensembl <- rownames(res)
 
-# ------------------------------ 8. ENSG -> Gene Symbol 转换（使用 org.Hs.eg.db） ------------------------------
+# ------------------------------ 8. ENSG -> Gene Symbol conversion (using org.Hs.eg.db) ------------------------------
 symbols <- mapIds(org.Hs.eg.db,
                   keys = res$ensembl,
                   column = "SYMBOL",
                   keytype = "ENSEMBL",
                   multiVals = "first")
 res$gene_symbol <- symbols
-# 未匹配的保留原始 ENSG
+# Keep original ENSG for unmatched entries
 res$gene_symbol[is.na(res$gene_symbol)] <- res$ensembl[is.na(res$gene_symbol)]
 
-# ------------------------------ 9. 标记显著性及上下调 ----------------------------------
+# ------------------------------ 9. Mark significance and up/downregulation ----------------------------------
 logFC_cutoff <- 1
 pval_cutoff  <- 0.05
 
@@ -65,13 +65,13 @@ res$regulation <- "Not significant"
 res$regulation[res$logFC > logFC_cutoff & res$adj.P.Val < pval_cutoff] <- "Up"
 res$regulation[res$logFC < -logFC_cutoff & res$adj.P.Val < pval_cutoff] <- "Down"
 
-cat("上调基因数:", sum(res$regulation == "Up"), "\n")
-cat("下调基因数:", sum(res$regulation == "Down"), "\n")
+cat("Number of upregulated genes:", sum(res$regulation == "Up"), "\n")
+cat("Number of downregulated genes:", sum(res$regulation == "Down"), "\n")
 
-# ------------------------------ 10. 保存完整差异结果 ----------------------------------
+# ------------------------------ 10. Save complete differential expression results ----------------------------------
 write.csv(res, "DEG_results_limma.csv", row.names = FALSE)
 
-# ------------------------------ 11. 火山图：基础版（含辅助线） ----------------------------------
+# ------------------------------ 11. Volcano plot: basic version (with reference lines) ----------------------------------
 p_base <- ggplot(res, aes(x = logFC, y = -log10(adj.P.Val), color = regulation)) +
   geom_point(alpha = 0.6, size = 1.2) +
   scale_color_manual(values = c("Up" = "#E41A1C", "Down" = "#377EB8", "Not significant" = "grey")) +
@@ -88,7 +88,7 @@ p_base <- ggplot(res, aes(x = logFC, y = -log10(adj.P.Val), color = regulation))
 ggsave("volcano_basic.pdf", p_base, width = 8, height = 7)
 ggsave("volcano_basic.png", p_base, width = 8, height = 7, dpi = 300)
 
-# ------------------------------ 12. 火山图：标注 top 基因 ----------------------------------
+# ------------------------------ 12. Volcano plot: label top genes ----------------------------------
 top_up <- res %>%
   filter(regulation == "Up") %>%
   arrange(adj.P.Val) %>%
@@ -102,8 +102,7 @@ top_down <- res %>%
 top_genes <- bind_rows(top_up, top_down) %>%
   filter(!is.na(gene_symbol))
 
-library(ggrepel)   # 重要：必须加载
-
+library(ggrepel)   # Important: must load
 
 p_labeled <- p_base +
   geom_label_repel(data = top_genes,
@@ -114,8 +113,8 @@ p_labeled <- p_base +
 ggsave("volcano_labeled.pdf", p_labeled, width = 8, height = 8)
 ggsave("volcano_labeled.png", p_labeled, width = 8, height = 8, dpi = 300)
 
-# ------------------------------ 13. ECM 基因高亮火山图 ----------------------------------
-# 用户提供的 ECM 基因列表
+# ------------------------------ 13. Volcano plot highlighting ECM genes ----------------------------------
+# User-provided ECM gene list
 ecm_genes <- c(
   "COL1A1", "COL1A2", "COL3A1", "COL4A1", "COL4A2", "COL4A3", "COL4A4",
   "COL4A5", "COL4A6", "COL5A1", "COL5A2", "COL5A3", "COL6A1", "COL6A2",
@@ -170,8 +169,8 @@ p_ecm <- ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
 ggsave("volcano_ECM_highlight.pdf", p_ecm, width = 10, height = 8)
 ggsave("volcano_ECM_highlight.png", p_ecm, width = 10, height = 8, dpi = 300)
 
-# ------------------------------ 14. PCA 图（检查分组效果） ----------------------------------
-pca_data <- t(v$E)   # 样本×基因
+# ------------------------------ 14. PCA plot (to check grouping) ----------------------------------
+pca_data <- t(v$E)   # samples x genes
 pca <- prcomp(pca_data, scale. = TRUE)
 pca_df <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], Group = group)
 
@@ -185,67 +184,64 @@ pca_plot <- ggplot(pca_df, aes(x = PC1, y = PC2, color = Group)) +
 
 ggsave("PCA_plot.pdf", pca_plot, width = 6, height = 5)
 
-# ------------------------------ 完成 ----------------------------------
-cat("\n分析完成！结果文件已保存至当前目录。\n")
+# ------------------------------ Completed ----------------------------------
+cat("\nAnalysis completed! Result files saved to the current directory.\n")
 print(table(res$regulation))
 
-
-
 # ============================================================================
-# GO 和 KEGG 富集分析（基于 clusterProfiler）
-# 参考 TCGA 分析代码，适配当前数据
+# GO and KEGG enrichment analysis (based on clusterProfiler)
+# Adapted from TCGA analysis code for the current data
 # ============================================================================
 
-# ------------------------------ 加载包 ----------------------------------
+# ------------------------------ Load packages ----------------------------------
 library(clusterProfiler)
 library(org.Hs.eg.db)
 library(enrichplot)
 library(ggplot2)
 library(dplyr)
 library(RColorBrewer)
-library(circlize)      # 用于圆圈图（若不需要可注释）
+library(circlize)
 library(ComplexHeatmap)
 
-# ------------------------------ 设置参数 ----------------------------------
-pvalueFilter <- 0.05       # P 值阈值
-qvalueFilter <- 0.05       # 校正后 Q 值阈值
-logFC_cutoff <- 1          # log2FC 阈值
+# ------------------------------ Set parameters ----------------------------------
+pvalueFilter <- 0.05
+qvalueFilter <- 0.05
+logFC_cutoff <- 1
 
-# ------------------------------ 提取显著差异基因 ----------------------------------
-# 根据 adj.P.Val 和 logFC 筛选显著基因
+# ------------------------------ Extract significant differentially expressed genes ----------------------------------
 sig_genes <- res %>%
   filter(adj.P.Val < pvalueFilter & abs(logFC) > logFC_cutoff)
 
-cat("显著上调基因数:", sum(sig_genes$logFC > 0), "\n")
-cat("显著下调基因数:", sum(sig_genes$logFC < 0), "\n")
+cat("Number of significantly upregulated genes:", sum(sig_genes$logFC > 0), "\n")
+cat("Number of significantly downregulated genes:", sum(sig_genes$logFC < 0), "\n")
 
-# 获取所有显著基因的 gene_symbol 列表
+# Get gene_symbol list of all significant genes
 gene_symbols <- unique(sig_genes$gene_symbol)
-gene_symbols <- gene_symbols[!is.na(gene_symbols)]  # 去除 NA
+gene_symbols <- gene_symbols[!is.na(gene_symbols)]
 
-# 转换为 ENTREZID
+# Convert to ENTREZID
 entrez_ids <- bitr(gene_symbols, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
 gene_entrez <- entrez_ids$ENTREZID
 
-cat("转换后获得 ENTREZID 数量:", length(gene_entrez), "\n")
+cat("Number of ENTREZIDs obtained after conversion:", length(gene_entrez), "\n")
 
-# ------------------------------ GO 富集分析（BP, CC, MF 分别进行） ----------------------------------
+# ------------------------------ GO enrichment analysis (BP, CC, MF separately) ----------------------------------
 go_all <- enrichGO(gene = gene_entrez,
                    OrgDb = org.Hs.eg.db,
-                   ont = "ALL",                # 同时分析 BP, CC, MF
+                   ont = "ALL",
                    pAdjustMethod = "BH",
                    pvalueCutoff = 0.05,
                    qvalueCutoff = 0.2,
                    readable = TRUE)
 
-# 保存 GO 结果
+# Save GO results
 go_df <- as.data.frame(go_all)
 write.csv(go_df, "GO_all.csv", row.names = FALSE)
 
-# 按 ONTOLOGY 分类筛选显著条目
+# Filter significant terms by ONTOLOGY
 go_sig <- go_df %>% filter(pvalue < pvalueFilter & qvalue < qvalueFilter)
 
-# ------------------------------ KEGG 富集分析 ----------------------------------
+# ------------------------------ KEGG enrichment analysis ----------------------------------
 kegg_all <- enrichKEGG(gene = gene_entrez,
                        organism = "hsa",
                        pAdjustMethod = "BH",
@@ -255,8 +251,7 @@ kegg_all <- enrichKEGG(gene = gene_entrez,
 kegg_df <- as.data.frame(kegg_all)
 write.csv(kegg_df, "KEGG_all.csv", row.names = FALSE)
 
-# ------------------------------ 可视化 1：条形图（GO） ----------------------------------
-# 取每个 ONTOLOGY 前 10 个条目
+# ------------------------------ Visualization 1: bar plot (GO) ----------------------------------
 go_top <- go_sig %>%
   group_by(ONTOLOGY) %>%
   slice_min(order_by = pvalue, n = 10) %>%
@@ -275,7 +270,7 @@ if (nrow(go_top) > 0) {
   print(p_bar)
 }
 
-# ------------------------------ 可视化 2：气泡图（GO） ----------------------------------
+# ------------------------------ Visualization 2: dot plot (GO) ----------------------------------
 if (nrow(go_top) > 0) {
   p_dot <- dotplot(go_all, showCategory = 10, split = "ONTOLOGY", label_format = 60) +
     facet_grid(ONTOLOGY ~ ., scale = "free") +
@@ -286,7 +281,7 @@ if (nrow(go_top) > 0) {
   print(p_dot)
 }
 
-# ------------------------------ 可视化 3：条形图（KEGG） ----------------------------------
+# ------------------------------ Visualization 3: bar plot (KEGG) ----------------------------------
 if (!is.null(kegg_all) && nrow(kegg_all) > 0) {
   kegg_top <- head(kegg_all, 15)
   p_kegg_bar <- ggplot(kegg_top, aes(x = Count, y = reorder(Description, Count))) +
@@ -296,8 +291,8 @@ if (!is.null(kegg_all) && nrow(kegg_all) > 0) {
     theme_classic()
   ggsave("KEGG_barplot.pdf", p_kegg_bar, width = 8, height = 6)
   print(p_kegg_bar)
-  
-  # 气泡图（KEGG）
+
+  # Dot plot (KEGG)
   p_kegg_dot <- dotplot(kegg_all, showCategory = 15) +
     scale_color_gradient(low = "blue", high = "red") +
     labs(title = "KEGG Enrichment Dotplot")
@@ -305,37 +300,29 @@ if (!is.null(kegg_all) && nrow(kegg_all) > 0) {
   print(p_kegg_dot)
 }
 
+cat("\nEnrichment analysis completed! All results saved to the current directory.\n")
 
+# ------------------------------ GSEA ----------------------------------
 
-cat("\n富集分析完成！所有结果已保存至当前目录。\n")
-
-
-
-
-
-
-
-
-
-# 加载包
+# Load packages
 library(clusterProfiler)
 library(enrichplot)
 library(ggplot2)
 
-# 设置工作目录
+# Set working directory
 setwd("/mnt/data4/表型研究2026/ccRCC/RHWU/8.生物学")
 
-# 从差异结果中准备排序基因列表（与之前一致）
+# Prepare ranked gene list from differential results (same as before)
 geneList <- res$logFC
 names(geneList) <- res$gene_symbol
 geneList <- na.omit(geneList)
 geneList <- sort(geneList, decreasing = TRUE)
 
-# 读取 KEGG GMT 文件（请确保文件存在）
+# Read KEGG GMT file (ensure the file exists)
 gmt_file <- "c2.cp.kegg.Hs.symbols.gmt"
 gmt <- read.gmt(gmt_file)
 
-# 运行 GSEA（对所有通路）
+# Run GSEA (for all pathways)
 gsea_res <- GSEA(geneList,
                  TERM2GENE = gmt,
                  pvalueCutoff = 0.05,
@@ -343,44 +330,40 @@ gsea_res <- GSEA(geneList,
                  maxGSSize = 500,
                  verbose = FALSE)
 
-# 查看结果
+# View results
 gsea_df <- as.data.frame(gsea_res)
 head(gsea_df)
 
-# 保存完整结果
+# Save complete results
 write.csv(gsea_df, "GSEA_KEGG_all.csv", row.names = FALSE)
 
+# Pathway name (usually "KEGG_ECM_RECEPTOR_INTERACTION" in KEGG)
+ecm_pathway <- "KEGG_STARCH_AND_SUCROSE_METABOLISM"
 
-# 通路名称（KEGG 中通常为 "KEGG_ECM_RECEPTOR_INTERACTION"）
-ecm_pathway <- "KEGG_DRUG_METABOLISM_CYTOCHROME_P450"
-
-# 检查通路是否存在
+# Check whether the pathway exists
 if (ecm_pathway %in% gsea_res@result$ID) {
-  
-  # 绘制单通路图（带统计表）
+
+  # Draw single-pathway plot (with statistics table)
   p <- gseaplot2(gsea_res,
                  geneSetID = ecm_pathway,
                  title = "ECM Receptor Interaction",
                  base_size = 12
-                 ,pvalue_table = TRUE,  # 显示p值和NES
+                 ,pvalue_table = TRUE,
                  ES_geom = "line"
                  )
-  
-  # 保存 PDF
-  pdf("GSEA_ECM_pathway.pdf", width = 7, height = 6)
+
+  # Save PDF
+  pdf("GSEA_ECM_pathway.pdf", width = 11, height = 6)
   print(p)
   dev.off()
-  
-  # 显示该通路信息
-  cat("\n=== ECM 受体相互作用通路富集结果 ===\n")
-  print(gsea_res@result[gsea_res@result$ID == ecm_pathway, 
+
+  # Display information for this pathway
+  cat("\n=== Enrichment results for ECM receptor interaction pathway ===\n")
+  print(gsea_res@result[gsea_res@result$ID == ecm_pathway,
                         c("ID", "NES", "pvalue", "p.adjust", "setSize")])
-  
+
 } else {
-  cat("通路", ecm_pathway, "不在 GSEA 结果中。\n")
-  cat("可用的通路有（前10个）：\n")
+  cat("Pathway", ecm_pathway, "is not in the GSEA results.\n")
+  cat("Available pathways (top 10):\n")
   print(head(gsea_res@result$ID, 10))
 }
-
-
-
